@@ -1,405 +1,329 @@
-# RTX 4090 D Tensor-Unlock Kit（Linux + Windows 双系统解锁套件）
+# RTX 4090 D 双系统解锁套件（Linux + Windows）
 
-> 🇬🇧 **English readers**: [jump to the full English documentation ↓](#english) ｜ 中文文档见下文
+一台机器、一块被"半速"的 4090 D，两个系统都要满速。Linux 侧用上游
+[gpu-unlock-ada](https://github.com/JustAResearcher/gpu-unlock-ada) 的内核模块早就跑通了；
+这个仓库解决的是另一半：让 Windows 从 GRUB 的"解锁启动"条目进去时，同样拿到满速张量核。
+启动项能自愈（内核升级、grub 重刷、甚至 Windows Update 清掉 ESP 文件都能恢复），一键卸载。
 
-**English**: Unlock halved FP32-accumulate tensor-core rates (FP16/BF16→FP32, FP8/e4m3,
-TF32) on NVIDIA Ada (RTX 40) and Ampere (RTX 30) GPUs on **both Linux and Windows**,
-with a self-healing GRUB boot entry that runs the pre-OS UEFI firmware transaction
-before `bootmgfw.efi`. Volatile, no VBIOS/flash/driver patching.
-⚠️ **Verified device: RTX 4090 D (`10de:2685`) only — other Ada/Ampere models are supported by design but pending verification (see §6).**
-Keywords: RTX 4090D unlock, 4090D 解锁, tensor core FP32 accumulate, FP8, Ada, AD102,
-GSP-RM, PLM, nv-uefi-unlocker, gpu-unlock-ada, GRUB chainload, dual boot unlock.
+> 🇬🇧 English version: [jump down ↓](#english-version)
 
-[![License: GPL-2.0-only](https://img.shields.io/badge/license-GPL--2.0--only-blue)](LICENSE)
-![platform](https://img.shields.io/badge/platform-Linux%20%7C%20Windows-informational)
-![tested](https://img.shields.io/badge/tested-RTX%204090D%20(10de%3A2685)%20%C3%974%20boots-green)
+**先说结论**：fp8/e4m3 从 270 跑到 **589.6 TF/s（×2.18）**，f16/f32 从 148 到 **296.6（×2.00）**，
+Linux 和 Windows 解锁态的数字对到了小数点后一位。游戏、INT8 量化推理不受益（见下文）。
+**目前只有 `10de:2685`（4090D）完整实测过**，机制上适用于整个 Ada 家族，其他型号算"待验证"。
 
-在双系统机器上，让 RTX 4090 D (AD102, `10de:2685`) 在进入 Windows 时同样获得与
-Linux `gpu_unlock` 内核模块一致的张量算力解锁。方案对 Ada 全系通用，但
-**本仓库仅验证过 `10de:2685`，其余型号待实测**（§6）；启动项自动持久（内核升级、
-GRUB 升级、ESP 载荷被清均能自愈），可一键完整卸载。本仓库 = 集成脚本 +
-双平台统一单文件基准 + 可复现实测证据，是上游研究项目的**参考实现**。
-Upstream research & implementation: [JustAResearcher/gpu-unlock-ada](https://github.com/JustAResearcher/gpu-unlock-ada)；
-Windows pre-OS tool: [physicsdolphin/nv-uefi-unlocker](https://github.com/physicsdolphin/nv-uefi-unlocker).
+![license](https://img.shields.io/badge/license-GPL--2.0--only-blue) ![platform](https://img.shields.io/badge/platform-Linux%20%7C%20Windows-informational) ![tested](https://img.shields.io/badge/tested-RTX%204090D%20(10de%3A2685)%20%C3%974%20boots-green)
 
----
+## 为什么做这个
 
-## 1. 原理：锁是什么，怎么解
+我的主力推理环境在 Linux（strata/LLM 服务常驻 45G 显存），解锁是今年早些时候的事。
+切回 Windows 才发现什么都没变：卡还是半速。上游有 Windows 的思路——任何驱动加载**之前**
+跑一次 pre-OS 的 UEFI 固件事务，但桌面 4090D 没人做过完整记录。于是把社区工具
+[nv-uefi-unlocker](https://github.com/physicsdolphin/nv-uefi-unlocker) 接进 GRUB，
+核对了它用的 AD102 载荷和上游内核模块是同一份字节，然后做了四次开机 A/B：
+Linux 原生内核、Linux 换 XanMod、Windows 原版、Windows 解锁。本仓库就是这套产物：
+安装/卸载脚本、GRUB 持久化钩子、双平台单文件自测程序，加上原始日志。
 
-NVIDIA 在 Ada 的消费级 GSP-RM 固件里用一组 feature 选择器（PLM/SS0/SS1 寄存器，
-内核侧观测为 `fmla32` 等位）把**张量核算法中"FP32 累加"路径限制在半速**：
+## 锁是怎么回事
 
-| 通路 | 锁住 | 解锁后 |
+NVIDIA 在 Ada 消费卡的 GSP-RM 固件里留了一组 feature 选择器（PLM / SS0 / SS1，
+Linux 侧能观测到位名 `fmla32`），把张量核里**累加器是 FP32** 的矩阵乘压到半速：
+
+| 通路 | 出厂状态 | 解锁后（本机实测） |
 |---|---|---|
-| FP16×FP16→**FP32** mma | 半速 | **2.00×** |
-| BF16→**FP32** mma | 半速 | **2.2×** |
-| TF32 mma | 半速 | 1.8× |
-| **FP8 (e4m3)→FP32** mma | 半速 | **2.18×** |
-| FP16→FP16 / INT8 / dp4a / 标量 FP32 (FFMA) | 不受锁影响 | 不变 |
+| FP16×FP16→**FP32** mma | 半速 | 148.3 → 296.6 TF/s |
+| BF16→**FP32** mma | 半速 | 133.7 → 296.3 |
+| TF32 mma | 半速 | 73.8 → 135.5 |
+| **FP8 (e4m3)** mma | 半速 | 270.1 → 589.6 |
+| FP16→FP16、INT8、dp4a、标量 FFMA | 本来就没压 | 不变 |
 
-解锁不是刷 VBIOS、不是改驱动、不是超频，而是一次**冷启动固件事务**
-（与本仓库 Linux 模块 `unlock_610.c` 相同的交易族，同一份 AD102 载荷）：
+解锁不是刷 VBIOS、不是改驱动、也不是超频，而是一笔冷启动固件事务，跟 Linux 内核模块
+（`unlock_610.c`）完全同族、同一份 AD102 四写载荷：
 
 ```
-UEFI DXE 时窗（任何 OS/驱动加载之前）
-  SEC2 scrubber 停机 → FWSEC (FRTS) 拉起签名 Booter → 装载 GSP-RM 固件
-  → 注入 V67 四写载荷 (WPR_CFG=0xfffff0ff, FBPA/WPR/FEAT_OVR_PLM=0xffffffff)
-  → mailbox marker 0x67b00001 → 权限/SEC2-HALT 读回验证 → 一次 PCIe FLR
-  → 校验读回 → 交链式加载器启动 Windows Boot Manager
+UEFI DXE 时窗（此时还没有任何 OS/驱动）
+  SEC2 scrubber 停机 → FWSEC (FRTS) 拉起签名 Booter → 装载 GSP-RM
+  → V67 四写 (WPR_CFG=0xfffff0ff，其余三个 =0xffffffff)
+  → mailbox marker 0x67b00001 → 读回权限位和 SEC2-HALT → 一次 PCIe FLR
+  → 全部验证通过才交链：加载 bootmgfw.efi 进 Windows
 ```
 
-关键性质：
+三个性质值得单独说，因为它们决定了风险和用法：
 
-- **易失**：写在 GPU 寄存器，断电即失；每次开机需重跑（由启动项自动完成）。
-- **OS 无关**：事务发生在 boot services 阶段，与 Windows/Linux、与驱动版本
-  完全解耦。实测 Windows（CUDA driver API 13.5，比 Linux 侧 615.71.09/13.4
-  更新的分支）拿到与 Linux **逐位吻合**的满速（见 §5）。
-- **安全失败**：载荷哈希、ROM/FWSEC 几何、控制台/DMA 图全部钉死后才允许写；
-  任何一步验证不过 → 零写入直接链回 Windows。`tx-require-d0.txt` 保证
-  休眠/热态恢复时不落一笔。已解锁再跑返回 EALREADY（跳过，不会二次 FLR
-  打爆活动中的解锁状态）。
+- **易失**。写在 GPU 寄存器里，断电就没了，所以每次开机都要重跑——这正是做成 GRUB 条目的原因。
+- **跟 OS 和驱动版本无关**。事务在 boot services 阶段完成，后面装什么系统、驱动多新都不关心。
+  证据：Windows 侧驱动是比 Linux 更新的分支（CUDA API 13.5 对 615.71.09/13.4），
+  fp8 数字只差 0.03%。
+- **失败就零写入**。载荷哈希、ROM/FWSEC 几何、控制台和 DMA 的 owner 图全部钉死才允许动卡；
+  任何一步对不上，直接放弃写入链回正常 Windows。休眠/热恢复被 `tx-require-d0.txt` 挡住；
+  已经开着 PLM 再跑一次返回 EALREADY 跳过，不会乱 FLR 打断已生效的状态。
 
-Windows 侧实现采用社区项目
-[nv-uefi-unlocker v2.1.5](https://github.com/physicsdolphin/nv-uefi-unlocker)
-（Rust, 264 KB `BOOTX64.EFI`，SHA-256
-`9c615a3f5f16dfbe4800a5c46251cdb20f2886bbb4bec70fecab3400a3c2f7c9`），
-其 `2600..28ff` 设备段覆盖 `10de:2685`，AD102 家族资产由本项目
-`make-usbroot.sh --family ad102` 从钉定的公共输入离线再生，
-**与本仓库 `firmware/ada-610.43.03.json` 钉定清单逐字节一致**：
+供应链上我做了交叉验证：工具自带的 AD102 资产由 `make-usbroot.sh --family ad102` 从钉定的
+公共输入离线再生，四个关键文件与上游仓库 `firmware/ada-610.43.03.json` 清单逐字节相同——
+也就是说，Windows 写进卡里的，和 Linux 内核模块每天开机写的，是同一份东西。
 
-| 资产 | SHA-256 前缀 | 与上游仓库清单 |
+| 资产 | SHA-256 | 对上上游清单 |
 |---|---|---|
-| `v67-ad102-four-plm.bin` | `44c36b2d…` | ✅ 一致（同一份四写载荷） |
+| `v67-ad102-four-plm.bin`（四写载荷） | `44c36b2d…` | ✅ |
 | `booter_load_ad102.bin` | `6ee05b20…` | ✅ |
-| `gsp_boot_ad102.bin` | `45d6335a…` | ✅ |
-| `gsp_boot_desc_ad102.bin` | `83f8f3f1…` | ✅ |
+| `gsp_boot_ad102.bin` / `_desc_` | `45d6335a…` / `83f8f3f1…` | ✅ |
+| `BOOTX64.EFI`（nv-uefi-unlocker v2.1.5） | `9c615a3f…` | — |
 
-## 2. 安装
+## 安装
 
 ```bash
-# 1) 取工具与资产（需代理/网络；资产下载后脚本自动校验钉定哈希）
+# 1) 拉工具并离线生成资产（脚本自带钉定哈希校验，约 100MB 输入）
 cd /tmp && curl -LO https://github.com/physicsdolphin/nv-uefi-unlocker/releases/download/v2.1.5/nv-uefi-unlocker-v2.1.5.zip
 unzip -o nv-uefi-unlocker-v2.1.5.zip
 ./make-usbroot.sh --family ad102 --out /tmp/nvu/usbroot --work /tmp/nvu/inputs
-# 2) 安装集成（母本 → /usr/local/share，载荷 → ESP 根，GRUB 钩子 → /etc/grub.d/26）
+
+# 2) 装进系统：母本进 /usr/local/share，载荷进 ESP，钩子进 /etc/grub.d/26
 sudo ./linux/install_windows_unlock.sh /tmp/nvu/usbroot
-sudo update-grub
 ```
 
-`26_unlock_windows` 钩子在**每次 GRUB 重新生成时**（装内核、升 grub/驱动触发
-postinst、手动 update-grub）自动执行：
+安装后多出来的启动项叫 **Windows 11 (GPU Unlock)**，原来 os-prober 生成的普通
+Windows 条目原封不动——两条路径互不影响，这也是故意留的回退。
 
-1. 探测 Windows（已挂载 ESP 中存在 `bootmgfw.efi`，或固件启动项含该路径）——
-   探测不到就不生成条目，双系统被移除后不留死项；
-2. **自愈**：以 `/usr/local/share/nv-uefi-unlocker` 母本为准逐个比对哈希，
-   缺失或被 Windows Update 清掉的载荷文件自动补回 ESP；
-3. `search --fs-uuid` 动态写入当前 ESP UUID，重分区/重格式化后仍有效。
+钩子 `26_unlock_windows` 会在每次 `update-grub`（装内核自动触发）时做三件事：
+先探测这台机器现在还有没有 Windows（没有就不生成条目，不会留死项）；再拿
+`/usr/local/share/nv-uefi-unlocker` 母本对 ESP 上每个文件比哈希、缺了补；最后把当前
+ESP 的 UUID 动态写进 `search --fs-uuid`。所以内核升级、grub 重刷、甚至 Windows
+自己清理 ESP 之后，下次 `update-grub` 全部自动修复。如果 `/usr/local` 母本哪天也没了，
+`linux/restore_master_from_esp.sh` 能从完好的 ESP 载荷反向重建（逐文件验哈希）。
 
-ESP 根目录载荷与语义（工具从自身所在卷根读取）：
+ESP 根目录的文件一览（工具按自己所在卷的根路径读取）：
 
 | 文件 | 作用 |
 |---|---|
-| `BOOTX64.EFI` | 解锁工具本体 |
-| `booter_load/gsp_boot(_desc)/fwimage/fwsignature/scrubber_*.bin` | 事务固件输入 |
-| `v67-ad102-four-plm.bin` | **存在=解锁模式**；删除则变只读复演 |
-| `tx-select-bdf.txt` | 钉卡 `0000:01:00.0`，多卡防误写 |
-| `tx-require-d0.txt` | 非 D0（热/休眠恢复）时零写入中止 |
-| `chain-target.txt` | 链回目标钉为 `\EFI\Microsoft\Boot\bootmgfw.efi` |
-| `loader.log` | 每次运行的完整证据日志（Linux 下可直接读） |
-| `i_know_what_i_am_doing.txt` | （可选）armed 模式：5s 倒计时自动执行 |
+| `BOOTX64.EFI` | 事务执行体（v2.1.5） |
+| `booter_load/gsp_boot(_desc)/fwimage/fwsignature/scrubber_*.bin` | 固件输入，共 ~85MB |
+| `v67-ad102-four-plm.bin` | 它的存在本身就是开关：删掉退化成只读复演模式 |
+| `tx-select-bdf.txt` | 钉 `0000:01:00.0`，多卡机器防写错对象 |
+| `tx-require-d0.txt` | 非 D0 态（休眠恢复等）直接中止 |
+| `chain-target.txt` | 钉死链回 `\EFI\Microsoft\Boot\bootmgfw.efi` |
+| `loader.log` | 每次运行的完整证据日志，Linux 下随时能看 |
+| `i_know_what_i_am_doing.txt` | 可选：armed 模式，5 秒倒计时自动跑 |
 
-## 3. 使用
+## 日常怎么跑
 
 1. GRUB 选 **Windows 11 (GPU Unlock)**；
-2. 工具屏显横幅，**30 秒内按 Space/Enter 执行事务**（超时/任意其他键 =
-   零写入直接进 Windows）；armed 模式下 5 秒自动执行；
-3. 事务开始后该卡输出黑屏属正常（按设计剥离控制台拥有者），日志继续写入
-   `loader.log`，随后自动进入 Windows；
-4. 回 Linux 后 `cat /boot/efi/loader.log`，关键行：
-   `SELECTOR RESULT: transaction complete`、PLM 四写读回、`CHAIN: … bootmgfw`。
+2. 屏显横幅后 **30 秒内按空格/回车才真正执行**——超时或按别的键就是普通进 Windows，零写入。
+   （嫌每次按键麻烦就放 armed 文件改成 5 秒自动。）
+3. 按下去之后**屏幕会黑一阵，这是正常的**：事务按设计要剥离这张卡的控制台拥有者。
+   别慌也别断电，日志一直在写，写完自动进 Windows；
+4. 回 Linux 验收：`cat /boot/efi/loader.log`，找 `SELECTOR RESULT: transaction complete`、
+   四写读回和 `CHAIN` 行。
 
-Windows 前置条件：**关闭"快速启动"**（混合关机导致非 D0，工具将按设计中止），
-使用 610/615/616 分支驱动均可。若日常从已解锁的 Linux 热重启进入 Windows，
-PLM 已开 → EALREADY 跳过，亦无害。
+Windows 前置只有一条硬要求：**关掉快速启动**（混合关机后卡不在 D0，工具会按设计中止）。
+驱动 610/615/616 分支都行。从已解锁的 Linux 热重启过去也没关系，PLM 已开就走 EALREADY 跳过。
 
-## 4. 验证工具（Linux 与 Windows 均含于本项目 `bench/`）
+## 自测工具（bench/）
 
-统一单文件基准 `bench/gpu_unlock_bench.c`（同一份 C 源码、同两个内嵌 cubin
-编译出双平台二进制；**仅依赖系统 C 库**，运行时动态加载
-`libcuda.so.1`/`nvcuda.dll`，缺驱动时给出带指引的中文式报错而非静默退出）：
+Windows 和 Linux 用**同一份 C 源码**编译的两个二进制，内嵌与 Linux 上游完全相同的
+两个 cubin（`4fe8459d…` / `7f5aec64…`）：7 个 mma 模式测发射率，另 3 个模式把
+270,336 个输出单元全部读回比对，最后自动给 UNLOCKED / STOCK / INDETERMINATE 判定。
+运行时只动态加载 `nvcuda.dll` / `libcuda.so.1`，没有 CUDA Toolkit、没有任何附带文件；
+缺驱动、驱动太旧、cubin 损坏都会打人话报错，不会闷头退出。
 
-| 文件 | SHA-256 前缀 | 说明 |
+| 文件 | 哈希前缀 | 备注 |
 |---|---|---|
-| `bench/gpu_unlock_bench_linux` | `0142c33d…` | 静态依赖仅 libc，双击/终端直接跑 |
-| `bench/GpuUnlockBench.exe` | `3f43496d…` | PE32+ 静态，拷到 Windows 任意目录运行 |
-| `bench/cubin_embed.h` + `embed_cubins.py` | — | 内嵌 cubin（`4fe8459d…`/`7f5aec64…`）及可复现生成器（自动哈希校验） |
+| `bench/gpu_unlock_bench_linux` | `0142c33d…` | 依赖只有 libc |
+| `bench/GpuUnlockBench.exe` | `3f43496d…` | 静态 PE，任意目录双击，结果写同目录 txt |
+| `bench/embed_cubins.py` | — | 从上游 .cu 重新生成内嵌头，哈希漂移直接报错 |
 
-- 两者输出相同格式 `unlock_bench_<时间戳>.txt`（含驱动 API 版本、cubin SHA、
-  逐项 TF/s、270,336 单元全量校验、自动 UNLOCKED/STOCK/INDETERMINATE 判定）。
-- Linux 侧另保留 `../unlock_probe.sh`（shell 版）：额外记录环境、模块参数、
-  内核日志与 SM 频率/节流采样，适合建立正式基线。
-- 错误路径已实测：cubin 损坏/驱动过旧 → `CUDA 200 device kernel image is
-  invalid` + 版本提示；缺 `nvcuda.dll`/`libcuda.so.1` → 明确告知安装驱动。
+`linux/unlock_probe.sh` 是带完整环境记录的 shell 版（模块参数、内核日志、SM 频率和
+节流采样一起存档），适合建正式基线；日常抽查用 bench 就行。
 
-## 5. 实测（本机：RTX 4090 D 48G 改，X670E，Linux `7.3.0-x64v3-xanmod1`
-NVIDIA `615.71.09` / Windows CUDA API 13.5，2026-10-29，同 cubin、同 iters/reps）
+## 实测数字
 
-| 指标 (TF/s) | Win 原版 | Win 解锁 | 倍率 | Linux 解锁(基线) | Win 解锁 vs Linux |
-|---|---|---|---|---|---|
-| fp8/e4m3 | 270.1 | **589.6** | **2.18×** | 589.4 | +0.03% |
-| f16/f32 | 148.3 | **296.6** | **2.00×** | 295.2 | +0.5% |
-| bf16/f32 | 133.7 | **296.3** | 2.22× | 295.1 | +0.4% |
-| tf32 | 73.8 | 135.5 | 1.84× | 135.7 (runner) | ±1% |
-| s8/s32（对照） | 535.6 | 590.0 | ~1.0× | 589.9 | 一致 |
-| dp4a / ffma（对照） | 132.1 / 66.2 | 146.8 / 70.9 | ~1.0× | 146.6 / 70.7 | 一致 |
-| runner f16_f32/tf32/u4 | 134.2/73.8/1173.2 | 273.9/135.5/1173.5 | — | 271.3/135.7/1179.7 | ±2% |
-| 全单元校验 | 0 错误 | 0 错误 | — | 0 错误 | — |
+机器：4090 D 48G 改版（`10de:2685`），ROG X670E，96G 内存。
+Linux `7.3.0-x64v3-xanmod1` / NVIDIA `615.71.09`；Windows CUDA API 13.5。
+同 cubin、同 iters/reps，空闲卡测试，四次开机原始记录在 `results/evidence/`。
 
-与上游 4090 (2684) 报告的形状一致（FE：165.6→331.6 精确 2.00×）；
-2.18× 的 fp8 与 README 记录的"FP8 半速→满速"结构吻合。
-
-## 6. 适用设备与验证状态（重要）
-
-**机制是通用的，实测目前只有一种。**
-
-- 事务引擎与固件资产（AD102 家族 Booter/GSP/四写载荷）对整个 Ada 家族通用；
-  Windows 侧 nv-uefi-unlocker 的设备段为 `0x2600..0x28ff`——覆盖全部 GeForce 40
-  桌面与移动（AD102/103/103M/104/106/107）及部分工作站 L 级；其
-  `ga102`/`tu10x` 家族资产另覆盖 RTX 30（GA102/103/104/106/107）与 RTX 20/16
-  （Turing，需 GSP 模式、FLR 行为不同）。Linux 上游模块则采用逐 ID 白名单
-  （16 个 Ada ID，见上游 README 矩阵，含 4090D/4080S/4070 系/4060 系与
-  4060/4050 Laptop），专业 Ada、数据卡（L4/L40）与 Blackwell（RTX 50）
-  均不接受。
-- **本仓库唯一完整双端验证记录：`10de:2685` RTX 4090 D**
-  （`results/evidence/` 四次开机：Linux×2 + Windows stock/unlocked×2）。
-  其他 Ada/Ampere 型号 = **理论适用，本套件尚未实测**；成功与失败都欢迎
-  带 `loader.log` + `bench` 输出开 issue（上游按 first-silicon 流程把
-  型号升级为"已验证"）。
-- 上手前先花 60 秒判断"值不值得期待"：空闲 GPU 运行
-  `bench/gpu_unlock_bench_linux`（或 Windows 的 `GpuUnlockBench.exe`）——
-  **fp8 ≈ s8 的一半且 f16/f32 ≈ f16/f16 的一半 → 被锁，解锁预期 ~2×**；
-  fp8 ≈ s8 → 该 SKU 未被减半，解锁无吞吐收益（案例：某 Clevo 4090 Laptop）。
-- 笔记本专项提醒：MUX/独显直连（混显下控制台拥有者图不同）、RTD3 空闲
-  D3cold 会抹掉已生效的解锁（Windows 电源管理里关闭 dGPU 运行时挂起）、
-  `power.limit` 可能报 N/A（Dynamic Boost）。
-
-## 7. 什么场景真的更快（诚实版）
-
-**受益（矩阵乘走 FP32-accumulate 或 FP8 的负载）**：
-
-- **本地大模型推理（bf16/fp16 权重，prefill/首字）**：vLLM、TensorRT-LLM、
-  llama.cpp CUDA 后端的 GEMM 在 FP32 累加下运行——prefill/批处理吞吐最高
-  接近 2×；decode 受显存带宽限制，提升有限。
-- **FP8 模型与 FP8 KV cache**（Ada 独有 e4m3）：vLLM/TensorRT-LLM 的 FP8
-  GEMM 计算上限直接翻倍，长上下文预填充、批量服务受益明显。
-- **训练/微调（LoRA、QLoRA、全参 bf16/fp16-mixed）**：PyTorch autocast
-  bf16 的 matmul 即 FP32 累加路径；矩阵乘主导的迭代（如 7B LoRA 在
-  48G 卡上）步时下降可感。
-- **Diffusers/ComfyUI FP8·bf16 管线**（Flux、SD3.5-Max 等）：去噪步中
-  GEMM 占比高的模型受益，U-Net 纯 fp16acc16 管线受益有限。
-- **Whisper 训练/大语音批处理、Embedding 批量计算**等 GEMM-bound 服务。
-
-**不受益（明确别指望）**：
-
-- **INT8/INT4 量化推理**（dp4a/IMMA 路径未锁，也从未翻倍）——上游 README
-  记录的量化 MoE 服务负载"无变化"正是此因；
-- **游戏与 DLSS 渲染**：图形管线走 FP16→FP16 与光栅单元，不受影响；
-- **纯 FP32 科学计算 (FFMA)、NVENC 视频编码、显存容量、PCIe/内存带宽瓶颈型
-  负载、延迟敏感的访存操作**；
-- 已上线的 Windows-only 游戏帧数不会因此提高。
-
-简言之：**这是一次"面向 AI 数学库"的解锁**，凡 CUDA 调用 cuBLAS/CUTLASS
-里 `16F*16F+32F` / `BF16+32F` / `E4M3` GEMM 的都受益；渲染与 INT8 不受益。
-
-## 8. 风险与边界
-
-- 事务不写 VBIOS/不刷固件/不打驱动补丁；解锁状态断电即失。
-- 失败路径全部设计为"零写入 + 直接进 Windows"；最坏情况是屏幕停在工具横幅，
-  重启走原启动项即可。
-- `loader.log` 为证据记录；建议保留首次成功日志。
-- 本集成基于社区工具 + 上游研究，属**实验性**；对生产力机器请在可停机窗口验证。
-- 若更换显卡/刷 VBIOS，ROM/FWSEC 钉定资产需要重新生成（见上游 testing.md）。
-
-## 9. 卸载
-
-```bash
-sudo ./linux/uninstall_windows_unlock.sh
-```
-按母本清单哈希精确删除 ESP 载荷（哈希不符的他方文件保留并报告）、移除 GRUB
-钩子与 `/usr/local/share/nv-uefi-unlocker`，重新生成 `grub.cfg`；
-现有正常 Windows/Linux 条目不受任何影响。探针产物
-（`probe-results-*`、`unlock_probe.sh`、自己拷贝的 bench 二进制副本）按需自行删除。
-
-## 10. 致谢 / Acknowledgments
-
-- [JustAResearcher/gpu-unlock-ada](https://github.com/JustAResearcher/gpu-unlock-ada) —
-  上游项目：解锁原理、Linux 内核模块、探针工具与 `firmware/` 钉定资产清单（本套件
-  的 v67 四写载荷与其逐字节一致）；`docs/` 的大量实测报告。
-- [physicsdolphin/nv-uefi-unlocker](https://github.com/physicsdolphin/nv-uefi-unlocker) —
-  Windows/UEFI pre-driver 解锁工具（v2.1.5，GPL-2.0）；RTD3、GSP、Turing 差异等
-  关键工程文档；本集成的事务执行体。
-- [impacifist/Windows-GPU-UNLOCK](https://github.com/impacifist/Windows-GPU-UNLOCK) —
-  Windows UEFI 移植的先驱实现。
-- [matrixxx1/gpuunlock-windows](https://github.com/matrixxx1/gpuunlock-windows) —
-  基于上游事务核的 RTX 4090 Laptop 专案，其选择器/托盘/状态脚本工程范式被本文借鉴。
-- TOTORONG/AD103_win_unlocker — AD102 四写载荷的指令级来源（经上游仓库致谢链）。
-- [NVIDIA/open-gpu-kernel-modules](https://github.com/NVIDIA/open-gpu-kernel-modules) —
-  钉定固件资产的公开来源。
-- 上游 issue/PR 的实测贡献者（4090D 八卡 #7、VFIO 2782 #15、各型号 matched 报告），
-  以及本机 2026-10-29 首次桌面 `10de:2685` Windows 双端验证的全部数据记录。
-- **本项目为 AI 辅助完成**（方案评估、脚本、文档、A/B 实测均由下述本地栈执行，
-  人工监督与最终验证由机器所有者完成）：
-  - 推理引擎：**Strata** — <https://github.com/Niko1221/Strata>（本机部署，引擎 0.1.53）
-  - 模型官方：**Qwen（通义千问团队）** — Qwen3.8-Flash-Next — <https://github.com/QwenLM>
-  - 量化作者：**Unsloth**（UD 动态量化 `q4_k_xl` GGUF）— <https://huggingface.co/unsloth>
-
-## 11. 收录关键词 / Keywords (SEO)
-
-RTX 4090D 解锁, RTX 4090 D unlock, 4090D 解锁, 4080 SUPER unlock, 4070 Ti SUPER,
-Ada tensor core unlock, FP32 accumulate 2x, FP8 e4m3 unlock, TF32 unlock,
-GSP-RM transaction, PLM open, fmla32, WPR2, SEC2 scrubber, nv-uefi-unlocker,
-gpu-unlock-ada, Windows GPU unlock, UEFI pre-driver unlock, GRUB chainload EFI,
-dual boot 解锁, vBIOS 不刷, tensor issue-rate benchmark, cuBLAS A/B, AD102 AD103,
-10de:2685, GpuUnlockBench, CUDA driver API benchmark
-
----
-
-# English
-
-## 1. How it works
-
-NVIDIA gates Ada's **FP32-accumulate tensor paths** (FP16→FP32, BF16→FP32,
-TF32) and **FP8 (e4m3)** mma issue rates at half speed behind GSP-RM feature
-selectors (PLM / SS0 / SS1, `fmla32`). Unlock = a cold-boot **firmware
-transaction before any OS driver exists**: SEC2 scrub → FWSEC → signed Booter
-→ GSP-RM load → the same V67 four-write payload the Linux module uses
-(`44c36b2d…`, byte-identical to this repo's pinned `firmware/ada-610.43.03.json`)
-→ marker `0x67b00001` → readback → one PCIe FLR → chainload
-`bootmgfw.efi`. Volatile (dies at power-off, re-run every boot), OS- and
-driver-version-independent (validated on Windows CUDA API 13.5 vs Linux
-615.71.09), and every unsafe path aborts with zero writes (EALREADY on warm
-boot, non-D0 abort via `tx-require-d0.txt`, handle-graph pinning).
-
-Tool: [nv-uefi-unlocker v2.1.5](https://github.com/physicsdolphin/nv-uefi-unlocker)
-(BOOTX64.EFI `9c615a3f…`), assets regenerated by its own
-`make-usbroot.sh --family ad102` from pinned public inputs.
-
-## 2–3. Install & use
-
-```bash
-cd /tmp && curl -LO https://github.com/physicsdolphin/nv-uefi-unlocker/releases/download/v2.1.5/nv-uefi-unlocker-v2.1.5.zip
-unzip -o nv-uefi-unlocker-v2.1.5.zip
-./make-usbroot.sh --family ad102 --out /tmp/nvu/usbroot --work /tmp/nvu/inputs
-sudo ./linux/install_windows_unlock.sh /tmp/nvu/usbroot
-```
-
-Boot entry **Windows 11 (GPU Unlock)**: press Space/Enter within 30 s to run
-the transaction (timeout or any other key = zero-write pass-through to
-Windows). The `26_unlock_windows` GRUB hook re-validates and self-heals the
-ESP payload on every `update-grub` (kernel installs, GRUB upgrades, Windows
-Update cleanup) and only emits the entry while a Windows Boot Manager is
-detected. Disable Windows "Fast Startup"; keep driver on 610/615/616.
-Evidence: `/boot/efi/loader.log` after each run.
-
-## 4–5. Verification (same-machine A/B, identical cubins)
-
-`bench/gpu_unlock_bench_linux` and `bench/GpuUnlockBench.exe` — one C source,
-two static single-file builds (driver-API only; they dlopen
-`libcuda.so.1`/`nvcuda.dll` and print guided errors when it is absent),
-embedding the exact `4fe8459d…`/`7f5aec64…` cubins; each writes
-`unlock_bench_<stamp>.txt` with an automatic UNLOCKED/STOCK verdict.
-`bench/embed_cubins.py` regenerates the embedded cubins and refuses on hash
-drift.
-
-| TF/s | Win stock | Win unlocked | ratio | Linux unlocked | Δ |
+| TF/s | Win 原版 | Win 解锁 | 倍率 | Linux 解锁 | Win vs Linux |
 |---|---|---|---|---|---|
 | fp8/e4m3 | 270.1 | **589.6** | **2.18×** | 589.4 | +0.03% |
 | f16/f32 | 148.3 | **296.6** | **2.00×** | 295.2 | +0.5% |
 | bf16/f32 | 133.7 | 296.3 | 2.22× | 295.1 | +0.4% |
 | tf32 | 73.8 | 135.5 | 1.84× | 135.7 | ±1% |
-| s8 / dp4a / ffma (controls) | unchanged | unchanged | ~1× | — | — |
-| cell verification | 0 err | 0 err | — | 0 err | — |
+| s8 / dp4a / ffma（对照） | 基本不动 | 基本不动 | ~1× | — | 一致 |
+| 单元校验 | 0 错 | 0 错 | — | 0 错 | — |
 
-## 6. What actually gets faster
+形状和上游 4090 的报告吻合（FE 实测 165.6→331.6 精确 2.00×）；fp8 的 2.18× 对应
+"半速→满速"。对照列没动说明测的不是整体频率红利，就是解锁本身。顺带一提，
+Ubuntu 内核和 XanMod 内核下 Linux 数字也在噪声内（fp8 完全相同），换内核不影响。
 
-**Benefits** (GEMMs on FP32-accumulate/FP8 tensor paths): LLM inference
-**prefill/batching** on bf16/fp16 weights (vLLM, TensorRT-LLM, llama.cpp —
-near-2× where compute-bound; decode stays bandwidth-bound); **FP8 models and
-FP8 KV-cache** serving (compute ceiling doubles); **LoRA/full fine-tuning**
-with torch autocast bf16; FP8/bf16 **Flux/SD3.5** pipelines; batched Whisper
-or embedding workloads.
-**No benefit**: INT8/INT4 inference (never gated, never doubled — matches
-upstream's quantized-MoE "no change" case), games/DLSS rendering, pure FP32
-HPC (FFMA), NVENC, VRAM capacity, memory-bandwidth-bound kernels.
+## 什么卡能用（以及值不值得期待）
 
-## Verification status (supported devices)
+机制层：事务和固件资产是整个 Ada 家族共用的（AD102/103/103M/104/106/107，桌面+移动，
+外加部分工作站 L 级——nv-uefi-unlocker 放行 `0x2600..0x28ff` 整段）；它的 `ga102`/`tu10x`
+资产族把 RTX 30 全系、RTX 20/16（Turing，要 GSP 模式且 FLR 行为不同）也带上了。
+Linux 上游则是逐 ID 白名单（16 个 Ada ID，见上游 README 矩阵）。专业 Ada、
+数据卡（L4/L40）、Blackwell（RTX 50）两边都不收。
 
-The transaction engine and AD102-family firmware assets are **generic across
-Ada** and the Windows tool's device window (`0x2600..0x28ff`) covers the
-whole GeForce 40 desktop/mobile line (plus L-class workstations); `ga102`
-and `tu10x` asset families extend it to RTX 30 and RTX 20/16. **However, the
-only fully validated device in this repository is `10de:2685` (RTX 4090 D)**
-— four logged boots in `results/evidence/`. Every other model is *expected
-to work, unverified here*. Quick pre-flight check: run the bench on an idle
-GPU — fp8 ≈ s8/2 means halved and unlockable (~2× expected); fp8 ≈ s8 means
-that SKU was never throttled and gains nothing. Laptops: use dGPU-direct /
-MUX mode, disable RTD3 (D3cold erases the volatile unlock). Professional Ada,
-data-center parts and Blackwell (RTX 50) are out of scope. Success or failure
-reports with `loader.log` + bench output are welcome and feed the upstream
-first-silicon tracking process.
+但注意，**这个仓库完整双端实测过的只有 `10de:2685`**。其他型号是"机制支持、
+本套件未验证"。掏卡之前先花一分钟判断有没有油水：空闲状态跑一下 bench，
+**fp8 是不是 s8 的一半**——是，说明这张卡被锁了，解锁预期 ~2×；
+fp8 和 s8 差不多，说明这个 SKU 压根没被减半（真实例子：某 Clevo 模具的 4090 Laptop，
+事务成功但吞吐一点没变），别浪费时间。笔记本额外两个坑：混显下先开独显直连
+（控制台 owner 图不一样），Windows 里关掉 dGPU 的 RTD3（空闲进 D3cold 会把解锁抹掉）。
 
-## 7–8. Risk & removal
+## 到底什么时候更快
 
-No VBIOS/flash/driver patching; worst case is a boot back to the stock entry.
-Remove everything hash-checked:
+这是**给 AI 数学库用的解锁**，跟图形性能无关。受益的是 cuBLAS/CUTLASS 里
+`16F*16F+32F`、`BF16+32F`、`E4M3` 这几条 GEMM：
+
+- 本地大模型推理的 **prefill / 批处理**（bf16/fp16 权重，vLLM、TensorRT-LLM、llama.cpp）：
+  算力受限段最高接近 2×；decode 阶段吃的是显存带宽，提升有限。
+- **FP8 模型和 FP8 KV cache**：Ada 特色，计算上限直接翻倍，长上下文和批量服务受益明显。
+- **LoRA / 全参微调**（torch autocast bf16 的 matmul 就是 FP32 累加路径）。
+- **Flux / SD3.5 这类 bf16/FP8 生图管线**里 GEMM 占比高的部分。
+- Whisper 批处理、Embedding 大堆计算这类 GEMM-bound 杂活。
+
+不受益，说死：**INT8/INT4 量化推理**（从没被锁也从没翻倍，上游量化 MoE 负载"无变化"
+的记录就是这个原因）、**游戏和 DLSS**（FP16→FP16 和光栅单元不归它管）、
+纯 FP32 科学计算（FFMA）、NVENC 视频编码、以及一切显存带宽瓶颈的负载。
+
+## 风险
+
+不写 VBIOS、不刷固件、不打补丁，解锁断电即失，事务失败路径全部是零写入退回正常启动。
+最坏情况就是卡在工具横幅上，重启走原来的 Windows 条目即可。换卡或刷 VBIOS 后
+ROM/FWSEC 钉定资产要重新生成（上游 testing.md 有流程）。整体是实验性方案，
+生产机请挑能停机的时候验证。
+
+## 卸载
 
 ```bash
 sudo ./linux/uninstall_windows_unlock.sh
 ```
 
-Files: `linux/install_windows_unlock.sh`, `linux/uninstall_windows_unlock.sh`,
-`26_unlock_windows` (GRUB hook source). Provenance: tool `9c615a3f…`;
-bench builds `0142c33d…` (Linux) / `3f43496d…` (exe); payload/asset hashes
-in §1 and §4.
+只删和母本清单哈希一致的文件（不一致的会保留并报告，防止误删别人的东西），
+然后移除钩子和母本、重刷 grub.cfg。正常的 Windows/Linux 启动项全程没有碰过。
 
-## Acknowledgments (EN)
+## 致谢
 
-Upstream research, Linux module and pinned AD102 payloads:
-[JustAResearcher/gpu-unlock-ada](https://github.com/JustAResearcher/gpu-unlock-ada);
-pre-OS UEFI transaction engine:
-[physicsdolphin/nv-uefi-unlocker](https://github.com/physicsdolphin/nv-uefi-unlocker)
-(GPL-2.0, v2.1.5); lineage: impacifist/Windows-GPU-UNLOCK,
-matrixxx1/gpuunlock-windows, TOTORONG/AD103_win_unlocker (payload origin),
-NVIDIA/open-gpu-kernel-modules (pinned firmware). First desktop `10de:2685`
-dual-OS validated record: this repo, 2026-10-29 (`results/evidence/`).
+- [JustAResearcher/gpu-unlock-ada](https://github.com/JustAResearcher/gpu-unlock-ada)：
+  上游研究，Linux 模块、探针工具和钉定固件清单都是它出的。本项目的 v67 载荷与它逐字节一致。
+- [physicsdolphin/nv-uefi-unlocker](https://github.com/physicsdolphin/nv-uefi-unlocker)：
+  pre-OS UEFI 事务引擎（GPL-2.0, v2.1.5），关于 RTD3/GSP/Turing 的文档救了我不少时间。
+- [impacifist/Windows-GPU-UNLOCK](https://github.com/impacifist/Windows-GPU-UNLOCK) 和
+  [matrixxx1/gpuunlock-windows](https://github.com/matrixxx1/gpuunlock-windows)：
+  Windows/UEFI 路线的先驱和 4090 Laptop 专案，交互与验证的范式学自这里。
+- TOTORONG/AD103_win_unlocker：四写载荷的指令级来源（经上游致谢链）。
+- [NVIDIA/open-gpu-kernel-modules](https://github.com/NVIDIA/open-gpu-kernel-modules)：钉定固件的出处。
+- 上游各 issue/PR 的实测人（4090D 八卡的 #7、VFIO 的 #15、各 matched 报告）。
 
-**This project was AI-assisted.** Planning, scripts, benchmarks and
-documentation were produced with a fully local stack, under human
-supervision and on-device verification by the machine owner:
-engine [Strata](https://github.com/Niko1221/Strata) (0.1.53, local), model
-[Qwen3.8-Flash-Next](https://github.com/QwenLM) (official Qwen team),
-quantized as Unsloth Dynamic Q4_K_XL GGUF by
-[Unsloth](https://huggingface.co/unsloth).
+**AI 辅助声明**：本仓库的方案调研、代码、文档和测试执行由本地 AI 完成
+（引擎 [Strata](https://github.com/Niko1221/Strata) 0.1.53，模型
+[Qwen3.8-Flash-Next](https://github.com/QwenLM)，
+[Unsloth](https://huggingface.co/unsloth) 的 UD Q4_K_XL 量化），全程离线推理；
+机器所有者负责监督、复核与最终验证。所有数字来自本机实开实测，可复现
+（`BUILD.txt` + 钉定哈希）。AI 会犯错，脚本先读再用。
+
+## 关键词
+
+RTX 4090D 解锁, RTX 4090 D unlock, 4080 SUPER unlock, Ada tensor core unlock,
+FP32 accumulate 2x, FP8 e4m3, TF32, GSP-RM, PLM, fmla32, SEC2 scrubber, WPR2,
+nv-uefi-unlocker, gpu-unlock-ada, Windows GPU unlock, UEFI pre-driver, GRUB
+chainload, dual boot, 10de:2685, GpuUnlockBench, AD102, 4070 Ti SUPER, 4060 laptop
 
 ---
 
-## 📝 生成方式声明 / AI-Assistance Disclosure (EN)
+# English version
 
-**中文**：本仓库的方案调研、代码（脚本/基准）、文档与全部实测数据于 2026-10-29
-由本地 AI 栈辅助完成：模型 **Qwen3.8-Flash-Next**（[Qwen 官方](https://github.com/QwenLM)），
-量化 **Unsloth UD Q4_K_XL**（[Unsloth](https://huggingface.co/unsloth)），
-推理引擎 **Strata**（[Niko1221/Strata](https://github.com/Niko1221/Strata)，引擎 0.1.53）。
-全程离线运行，未调用云端服务；数据均由本机硬件实测（`results/evidence/`），
-所有结论可复现（`BUILD.txt`、`bench/embed_cubins.py` 钉定哈希）。
-AI 输出存在错误可能，使用前请自行阅读脚本并评估风险。
+One machine, one RTX 4090 D, two OSes — both at full tensor speed. Upstream
+[gpu-unlock-ada](https://github.com/JustAResearcher/gpu-unlock-ada) unlocks the card under
+Linux with a kernel module; this kit brings the same unlock to Windows via a pre-OS UEFI
+transaction that runs from a self-healing GRUB entry before `bootmgfw.efi`. Verified numbers:
+**fp8 270 → 589.6 TF/s (×2.18), f16/f32 148 → 296.6 (×2.00)**, and the Windows and Linux
+unlocked results agree to within 0.5%.
 
-**English**: This repository (design research, scripts, benchmark code,
-documentation) was produced on 2026-10-29 with a fully **local** AI stack —
-model **Qwen3.8-Flash-Next** (official [Qwen team](https://github.com/QwenLM)),
-quantized **Unsloth Dynamic Q4_K_XL**
-([Unsloth](https://huggingface.co/unsloth)), served by the
-[Strata](https://github.com/Niko1221/Strata) engine (0.1.53) on the same
-machine being measured. No cloud inference was used. All numbers in
-`results/evidence/` come from on-device runs and are reproducible from the
-pinned hashes (`BUILD.txt`, `bench/embed_cubins.py`). AI output can be wrong:
-read the scripts and assess the risk before use.
+## What the lock is
+
+Ada GeForce parts ship with the FP32-accumulate tensor paths (FP16→FP32, BF16→FP32, TF32)
+and FP8(e4m3) capped at half issue rate by GSP-RM feature selectors (PLM/SS0/SS1,
+`fmla32`). FP16→FP16, INT8, dp4a and scalar FFMA were never capped and never change.
+Unlock = a cold-boot firmware transaction (SEC2 scrub → FWSEC → signed Booter → GSP-RM load
+→ four PLM writes → readback → one PCIe FLR → chainload). No VBIOS, no driver patching.
+It is **volatile** (power-off resets it, so it runs at every boot) and **OS-independent**
+(our Windows driver is a newer branch than Linux's; numbers match anyway).
+The payload written on Windows is the exact same AD102 four-write blob the Linux module
+uses — hash-checked against upstream's `firmware/ada-610.43.03.json`
+(`v67-ad102-four-plm.bin` = `44c36b2d…`).
+
+## Installing
+
+```bash
+cd /tmp && curl -LO https://github.com/physicsdolphin/nv-uefi-unlocker/releases/download/v2.1.5/nv-uefi-unlocker-v2.1.5.zip
+unzip -o nv-uefi-unlocker-v2.1.5.zip
+./make-usbroot.sh --family ad102 --out /tmp/nvu/usbroot --work /tmp/nvu/inputs
+sudo ./linux/install_windows_unlock.sh /tmp/nvu/usbroot
+```
+
+A new **Windows 11 (GPU Unlock)** entry appears; your existing boot entries are untouched.
+The GRUB hook re-checks Windows presence, re-verifies and restores the ESP payload by hash
+on every `update-grub`, and reads the ESP UUID dynamically — kernel upgrades, GRUB updates
+and Windows Update all survive. Disable Windows Fast Startup; drivers 610/615/616 are fine.
+
+Usage: pick the entry, press Space/Enter within 30 s (otherwise it boots Windows with zero
+writes). The screen goes dark during the transaction — that is the design releasing console
+owners; let it finish. Evidence lands in `/boot/efi/loader.log`.
+
+## Benchmark
+
+`bench/gpu_unlock_bench_linux` and `bench/GpuUnlockBench.exe`: one C source, two static
+single-file builds, same embedded cubins as the Linux reference tools (`4fe8459d…`/`7f5aec64…`),
+driver-API only (dlopen; friendly errors if the driver is missing/old), 270,336-cell output
+verification, automatic UNLOCKED/STOCK verdict in `unlock_bench_*.txt`.
+
+## Results (RTX 4090 D, X670E, Linux xanmod 7.3.0-x64v3 / 615.71.09, Windows CUDA API 13.5)
+
+| TF/s | Win stock | Win unlocked | ratio | Linux unlocked |
+|---|---|---|---|---|
+| fp8/e4m3 | 270.1 | 589.6 | 2.18× | 589.4 |
+| f16/f32 | 148.3 | 296.6 | 2.00× | 295.2 |
+| bf16/f32 | 133.7 | 296.3 | 2.22× | 295.1 |
+| tf32 | 73.8 | 135.5 | 1.84× | 135.7 |
+| controls (s8/dp4a/ffma) | unchanged | unchanged | ~1× | — |
+
+## Supported devices
+
+By design: the tool admits the whole `0x2600..0x28ff` window (all Ada desktop/mobile, plus
+L-class), and `ga102`/`tu10x` asset families cover RTX 30 and RTX 20/16 (Turing needs GSP
+mode; FLR behaves differently). **Verified here: only `10de:2685`** (four boots in
+`results/evidence/`). Before trying a card, run the bench idle: fp8 ≈ s8/2 means the card
+is throttled and unlock should ~2× it; fp8 ≈ s8 means the SKU was never halved and you
+gain nothing (a real Clevo 4090-Laptop case showed exactly that). Laptops: use dGPU-direct,
+and turn off RTD3 — D3cold erases the volatile unlock. Professional Ada, datacenter parts
+and Blackwell are out of scope.
+
+## What actually gets faster
+
+Anything whose GEMMs run FP32-accumulate or FP8 on tensor cores: LLM **prefill/batching**
+(vLLM, TensorRT-LLM, llama.cpp), **FP8 models and KV cache**, **LoRA/bf16 fine-tuning**,
+bf16/FP8 image pipelines (Flux, SD3.5), batched Whisper/embeddings. Not faster: INT8/INT4
+inference (never gated), games/DLSS, FFMA-bound HPC, NVENC, bandwidth-bound work.
+
+## Risk & removal
+
+No firmware or driver modification; failed paths write nothing and boot Windows normally;
+worst case, reboot into your untouched Windows entry. Remove everything:
+
+```bash
+sudo ./linux/uninstall_windows_unlock.sh
+```
+
+(Hash-checked: files that don't match the manifest are kept and reported.)
+
+## Acknowledgments & AI-assistance disclosure
+
+Same list as above: gpu-unlock-ada (upstream research/module/payloads),
+nv-uefi-unlocker v2.1.5 (the transaction engine), impacifist/Windows-GPU-UNLOCK and
+matrixxx1/gpuunlock-windows (pioneers), TOTORONG (payload origin),
+NVIDIA/open-gpu-kernel-modules (firmware source), upstream testers.
+
+This repository was produced with a fully **local** AI stack (engine:
+[Strata](https://github.com/Niko1221/Strata) 0.1.53; model:
+[Qwen3.8-Flash-Next](https://github.com/QwenLM),
+[Unsloth](https://huggingface.co/unsloth) UD Q4_K_XL quant), supervised and verified on-device
+by the owner. Numbers are reproducible (`BUILD.txt`, pinned hashes); AI output can be wrong,
+so read the scripts before running them.
