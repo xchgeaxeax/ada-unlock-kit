@@ -1,17 +1,20 @@
-# RTX 4090 D 双系统解锁套件（Linux + Windows）
+# Ada Unlock Kit —— RTX 40 系双系统解锁套件（Linux + Windows）
 
-一台机器、一块被"半速"的 4090 D，两个系统都要满速。Linux 侧用上游
-[gpu-unlock-ada](https://github.com/JustAResearcher/gpu-unlock-ada) 的内核模块早就跑通了；
-这个仓库解决的是另一半：让 Windows 从 GRUB 的"解锁启动"条目进去时，同样拿到满速张量核。
-启动项能自愈（内核升级、grub 重刷、甚至 Windows Update 清掉 ESP 文件都能恢复），一键卸载。
+针对 NVIDIA Ada（RTX 40 系，AD102/103/103M/104/106/107）的张量核限速解锁：同一笔
+pre-OS 固件事务，Linux 由上游 [gpu-unlock-ada](https://github.com/JustAResearcher/gpu-unlock-ada)
+的内核模块在开机时执行，Windows 由本套件挂进 GRUB 的解锁启动项执行。启动项自愈
+（内核升级、grub 重刷、Windows Update 清掉 ESP 文件都能恢复），一键卸载。
+事务引擎与 AD102 家族资产全 Ada 通用（工具放行 `0x2600..0x28ff` 整段）。
 
 > 🇬🇧 English version: [jump down ↓](#english-version)
 
-**先说结论**：fp8/e4m3 从 270 跑到 **589.6 TF/s（×2.18）**，f16/f32 从 148 到 **296.6（×2.00）**，
-Linux 和 Windows 解锁态的数字对到了小数点后一位。游戏、INT8 量化推理不受益（见下文）。
-**目前只有 `10de:2685`（4090D）完整实测过**，机制上适用于整个 Ada 家族，其他型号算"待验证"。
+**先说结论**（验证机型：4090 D，`10de:2685`）：fp8/e4m3 从 270 跑到 **589.6 TF/s（×2.18）**，
+f16/f32 从 148 到 **296.6（×2.00）**，Linux 和 Windows 解锁态数字对到小数点后一位。
+游戏、INT8 量化推理不受益（见文末）。机制适用于整个 Ada 家族，
+但**本套件目前只对 4090D 做了完整双端实测**，其他 Ada/Ampere 型号按"通用机制、待验证"对待
+（换卡前有一分钟自测法，见「什么卡能用」）。
 
-![license](https://img.shields.io/badge/license-GPL--2.0--only-blue) ![platform](https://img.shields.io/badge/platform-Linux%20%7C%20Windows-informational) ![tested](https://img.shields.io/badge/tested-RTX%204090D%20(10de%3A2685)%20%C3%974%20boots-green)
+![license](https://img.shields.io/badge/license-GPL--2.0--only-blue) ![platform](https://img.shields.io/badge/platform-Linux%20%7C%20Windows-informational) ![arch](https://img.shields.io/badge/Ada-AD102%20%C2%B7%20AD103%20%C2%B7%20AD104%20%C2%B7%20AD106%20%C2%B7%20AD107-lightgrey) ![tested](https://img.shields.io/badge/verified-RTX%204090D%20(10de%3A2685)%20%C3%974%20boots-green)
 
 ## 为什么做这个
 
@@ -135,7 +138,7 @@ Windows 和 Linux 用**同一份 C 源码**编译的两个二进制，内嵌与 
 
 ## 实测数字
 
-机器：4090 D 48G 改版（`10de:2685`），ROG X670E，96G 内存。
+验证机型：4090 D 48G 改版（`10de:2685`），ROG X670E，96G 内存。
 Linux `7.3.0-x64v3-xanmod1` / NVIDIA `615.71.09`；Windows CUDA API 13.5。
 同 cubin、同 iters/reps，空闲卡测试，四次开机原始记录在 `results/evidence/`。
 
@@ -230,12 +233,18 @@ chainload, dual boot, 10de:2685, GpuUnlockBench, AD102, 4070 Ti SUPER, 4060 lapt
 
 # English version
 
-One machine, one RTX 4090 D, two OSes — both at full tensor speed. Upstream
-[gpu-unlock-ada](https://github.com/JustAResearcher/gpu-unlock-ada) unlocks the card under
-Linux with a kernel module; this kit brings the same unlock to Windows via a pre-OS UEFI
-transaction that runs from a self-healing GRUB entry before `bootmgfw.efi`. Verified numbers:
-**fp8 270 → 589.6 TF/s (×2.18), f16/f32 148 → 296.6 (×2.00)**, and the Windows and Linux
-unlocked results agree to within 0.5%.
+A dual-boot (Linux + Windows) tensor-core unlock kit for the **NVIDIA Ada family**
+(RTX 40, dies AD102/103/103M/104/106/107). The same pre-OS firmware transaction that the
+upstream [gpu-unlock-ada](https://github.com/JustAResearcher/gpu-unlock-ada) Linux kernel
+module runs at boot is wired into GRUB as a self-healing "Windows (GPU Unlock)" entry, so
+Windows gets it too — surviving kernel installs, GRUB regenerations and even Windows Update
+wiping the ESP payload. The engine and AD102-family assets are generic across Ada (the tool
+admits the whole `0x2600..0x28ff` device window).
+
+Verified device: **RTX 4090 D (`10de:2685`)** — fp8 270 → 589.6 TF/s (×2.18),
+f16/f32 148 → 296.6 (×2.00), Windows and Linux unlocked results agreeing within 0.5%.
+Other Ada/Ampere models: supported by design, treat as unverified until you run the
+one-minute pre-flight check below.
 
 ## What the lock is
 
@@ -275,7 +284,7 @@ single-file builds, same embedded cubins as the Linux reference tools (`4fe8459d
 driver-API only (dlopen; friendly errors if the driver is missing/old), 270,336-cell output
 verification, automatic UNLOCKED/STOCK verdict in `unlock_bench_*.txt`.
 
-## Results (RTX 4090 D, X670E, Linux xanmod 7.3.0-x64v3 / 615.71.09, Windows CUDA API 13.5)
+## Results (verified device: RTX 4090 D, X670E, Linux xanmod 7.3.0-x64v3 / 615.71.09, Windows CUDA API 13.5)
 
 | TF/s | Win stock | Win unlocked | ratio | Linux unlocked |
 |---|---|---|---|---|
