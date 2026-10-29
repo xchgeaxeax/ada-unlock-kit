@@ -99,6 +99,16 @@ UEFI DXE 时窗（此时还没有任何 OS/驱动）
 | `gsp_boot_ad102.bin` / `_desc_` | `45d6335a…` / `83f8f3f1…` | ✅ |
 | `BOOTX64.EFI`（nv-uefi-unlocker v2.1.5） | `9c615a3f…` | — |
 
+**"AD102" 是命名来源，不是适用范围。** 上游清单原文：*"AD102 Booter archive
+shared by AD102/AD103/AD104/AD106/AD107"* —— 五颗 Ada die 共享同一 Booter/GSP-RM
+镜像（`make-usbroot` 里 `fwimage_ad10x.bin` 与 `fwimage_ad102.bin` 就是同一文件的别名），
+四写目标是 GSP-RM 家族共享的特征寄存器。上游 16 个 Ada 白名单 ID（AD103 的 2702/2705/2709、
+AD104 的 2782/2783/2786、AD106 的 2803/2805、AD107 的 2882/28a0/28e0/28e1、移动系
+AD103M/AD107M）全部以这份载荷解锁成功，其中多个型号有 matched 对照报告——所以本套件
+不需要也不存在"第二个 Ada payload"。Ampere（`ga102`）与 Turing（`tu10x`）走各自的
+资产族，由同一工具按 PCI ID 自动路由。安全边界：工具对每张卡的 ROM/FWSEC 几何做运行时
+验证，不匹配即零写入拒绝，跨 die 误用不可能被静默放行。
+
 ## 安装
 
 ```bash
