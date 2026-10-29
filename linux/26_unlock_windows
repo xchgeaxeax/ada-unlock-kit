@@ -1,0 +1,47 @@
+#!/bin/bash
+# SPDX-License-Identifier: GPL-2.0-only
+# /etc/grub.d/26_unlock_windows — persistent "Windows 11 (GPU Unlock)" entry.
+# Emitted only when a Windows Boot Manager is detected; self-heals the
+# nv-uefi-unlocker payload on the ESP. Never abort grub generation.
+set -u
+[ -d /sys/firmware/efi ] || exit 0
+STAGE=/usr/local/share/nv-uefi-unlocker
+[ -f "$STAGE/BOOTX64.EFI" ] || exit 0
+
+# --- Windows present? (mounted ESP with bootmgfw, or firmware boot entry) ---
+found=""
+while read -r dev mp fst _; do
+  [ "$fst" = vfat ] || continue
+  [ -f "$mp/EFI/Microsoft/Boot/bootmgfw.efi" ] && found=1 && break
+done < /proc/mounts
+if [ -z "$found" ] && command -v efibootmgr >/dev/null 2>&1; then
+  efibootmgr 2>/dev/null | grep -qi 'Microsoft\\Boot\\bootmgfw.efi' && found=1
+fi
+[ -n "$found" ] || exit 0
+
+# --- our ESP (where GRUB chainloads from): prefer /boot/efi, then /efi ---
+esp=""
+for c in /boot/efi /efi; do
+  awk -v m="$c" '$2==m && $3=="vfat"{f=1} END{exit !f}' /proc/mounts && { esp=$c; break; }
+done
+[ -n "$esp" ] || exit 0
+
+# --- repair: stage is the truth, ESP copy is disposable ---
+for f in "$STAGE"/*; do
+  b=$(basename "$f")
+  [ "$b" = SHA256SUMS ] && continue
+  cmp -s "$f" "$esp/$b" 2>/dev/null && continue
+  cp -f "$f" "$esp/$b" 2>/dev/null || exit 0
+done
+
+fsdev=$(awk -v m="$esp" '$2==m{print $1; exit}' /proc/mounts)
+fsuuid=$(blkid -s UUID -o value "$fsdev" 2>/dev/null)
+[ -n "$fsuuid" ] || exit 0
+
+cat <<EOF
+menuentry 'Windows 11 (GPU Unlock)' --class windows --class os {
+	search --fs-uuid --no-floppy --set=root $fsuuid
+	chainloader (\$root)/BOOTX64.EFI
+}
+EOF
+exit 0

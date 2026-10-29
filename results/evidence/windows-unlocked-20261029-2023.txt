@@ -1,0 +1,12 @@
+# Windows 11 via GRUB entry "Windows 11 (GPU Unlock)" (nv-uefi-unlocker v2.1.5 transaction)
+mode       best TF/s   runs
+f16/f16        296.6  272.3 / 281.4 / 296.6
+f16/f32        296.6  296.6 / 291.5 / 296.5
+bf16/f32       296.3  296.3 / 295.5 / 294.9
+s8/s32         590.0  589.8 / 590.0 / 571.1
+fp8/e4m3       589.6  527.5 / 589.6 / 589.0
+dp4a           146.8  141.2 / 146.6 / 146.8
+ffma            70.9  63.9 / 65.5 / 70.9
+verify: f16_f32 273.9 | tf32 135.5 | u4 1173.5   (0 mismatches)
+VERDICT: UNLOCKED (fp8 589.6 = +96% vs 270.1; f16/f32 296.6 = +100%)
+Same machine, same cubins as Linux runs above: fp8 delta +0.03% vs Linux.

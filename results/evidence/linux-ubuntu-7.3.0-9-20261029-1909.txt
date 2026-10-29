@@ -1,0 +1,14 @@
+# gpu-unlock-ada probe on Ubuntu kernel 7.3.0-9-generic, NVIDIA 615.71.09
+# RTX 4090 D (10de:2685), power.limit 425W, SM observed up to 2730MHz, idle start
+# runner cubin sha: 4fe8459d6a730af48329075ec74363d1ee70f94b515f4d5d4417d91c382e0e43
+# (full tensor_modes.json summary; raw dir later consolidated here)
+mode       best TF/s   all runs
+f16/f16        281.4 272.1/272.2/281.4
+f16/f32        295.1 291.6/295.1/295.0
+bf16/f32       289.9 268.3/281.6/289.9
+s8/s32         589.9 589.8/589.9/589.8
+fp8/e4m3       589.4 589.4/589.4/589.4
+dp4a           146.7 146.6/146.6/146.7
+ffma            70.7 70.7/70.6/70.7
+runner f16_f32 265.5 Top/s | tf32 135.7 | u4_s32 1126.2  (270336/270336 cells OK, 0 mismatches)
+VERDICT: UNLOCKED (fp8 full rate == s8; ~2x stock bands)

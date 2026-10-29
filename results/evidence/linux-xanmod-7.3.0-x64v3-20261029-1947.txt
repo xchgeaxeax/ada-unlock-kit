@@ -1,0 +1,12 @@
+# XanMod edge 7.3.0-x64v3-xanmod1, NVIDIA 615.71.09 (DKMS), same cubins
+mode       best TF/s   all runs
+f16/f16        295.2 295.1/295.2/295.2
+f16/f32        295.2 295.2/295.1/295.2
+bf16/f32       295.1 295.1/294.5/294.8
+s8/s32         589.9 589.9/589.8/589.9
+fp8/e4m3       589.4 589.4/589.4/589.4
+dp4a           146.6 146.6/146.6/146.6
+ffma            70.7 70.7/70.6/70.6
+runner f16_f32 271.3 | tf32 135.7 | u4_s32 1179.7  (0 mismatches)
+boot journal: pci 0000:01:00.0: gpu_unlock: unlocked ; SM peak 2745MHz, no throttle flags
+VERDICT: UNLOCKED, equal to Ubuntu-kernel baseline within noise (fp8 bit-identical)

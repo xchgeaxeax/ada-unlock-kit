@@ -1,0 +1,11 @@
+# Windows 11 normal boot (no unlock entry), GpuUnlockBench.exe, driver API 13.50
+mode       best TF/s   runs
+f16/f16        296.7  272.5 / 287.6 / 296.7
+f16/f32        148.3  148.3 / 148.3 / 144.9
+bf16/f32       133.7  131.0 / 133.7 / 132.6
+s8/s32         535.6  530.5 / 535.5 / 535.6
+fp8/e4m3       270.1  270.1 / 265.7 / 269.1
+dp4a           132.1  129.1 / 128.7 / 132.1
+ffma            66.2  66.2 / 62.7 / 65.7
+verify: f16_f32 134.2 | tf32 73.8 | u4 1173.2   (0 mismatches, 270336 cells)
+VERDICT: STOCK (fp8 and f16/f32 at half rate)
