@@ -1,9 +1,15 @@
-# Ada Unlock Kit —— RTX 40 系双系统解锁套件（Linux + Windows）
+# Ada Unlock Kit —— RTX 40 系解锁套件（Linux 内核模块 + Windows 启动集成）
 
-针对 NVIDIA Ada（RTX 40 系，AD102/103/103M/104/106/107）的张量核限速解锁：同一笔
-pre-OS 固件事务，Linux 由上游 [gpu-unlock-ada](https://github.com/JustAResearcher/gpu-unlock-ada)
-的内核模块在开机时执行，Windows 由本套件挂进 GRUB 的解锁启动项执行。启动项自愈
-（内核升级、grub 重刷、Windows Update 清掉 ESP 文件都能恢复），一键卸载。
+针对 NVIDIA Ada（RTX 40 系，AD102/103/103M/104/106/107）的张量核限速解锁。两条路，
+各自独立可用：
+
+- **只用 Linux**：`linux/setup_linux_unlock.sh` 检测发行版和构建环境（apt/dnf/pacman/zypper
+  分别给出安装命令），装依赖 → 克隆上游 → `make install` 出 DKMS 内核模块和固件包 →
+  打印本机所需启动参数。Linux 单独就能解锁，**不需要 Windows**。
+- **要 Windows 也解锁**：本套件把同一笔 pre-OS 事务挂进 GRUB 的
+  "Windows 11 (GPU Unlock)" 启动项，自愈（内核升级、grub 重刷、Windows Update 清掉
+  ESP 文件都能恢复），一键卸载。
+
 事务引擎与 AD102 家族资产全 Ada 通用（工具放行 `0x2600..0x28ff` 整段）。
 
 > 🇬🇧 English version: [jump down ↓](#english-version)
@@ -15,6 +21,28 @@ f16/f32 从 148 到 **296.6（×2.00）**，Linux 和 Windows 解锁态数字对
 （换卡前有一分钟自测法，见「什么卡能用」）。
 
 ![license](https://img.shields.io/badge/license-GPL--2.0--only-blue) ![platform](https://img.shields.io/badge/platform-Linux%20%7C%20Windows-informational) ![arch](https://img.shields.io/badge/Ada-AD102%20%C2%B7%20AD103%20%C2%B7%20AD104%20%C2%B7%20AD106%20%C2%B7%20AD107-lightgrey) ![tested](https://img.shields.io/badge/verified-RTX%204090D%20(10de%3A2685)%20%C3%974%20boots-green)
+
+## Linux 单独使用（先回答高频问题）
+
+不需要双系统也能解锁 Linux——这本来就是上游项目的主体。判断、装环境、编译、加参数、
+验证一条线走完：
+
+```bash
+./linux/setup_linux_unlock.sh --install-deps   # 检测缺失组件并按发行版给出/执行安装
+```
+
+脚本做的事：读 `/etc/os-release` 识别 Ubuntu/Debian、Fedora/RHEL、Arch、openSUSE，
+分别准备 apt/dnf/pacman/zypper 的依赖命令（git、C 工具链、**运行中内核的 headers**、
+dkms、python3、zstd、pciutils）；用 `lspci` 认卡并对照上游支持表——`2684` 走主路径，
+`2685/2689/2702/2704/2705/2709/2757/2782/2783/2786/2803/2805/2882/28a0/28e0/28e1`
+这些实验 ID 提示需要的 opt-in 标志，**不在表里的 ID 会劝退**（跨家族误配固件只会 HALT，
+不解锁）。然后 `make install`：上游会按检测到的发行版走 deb/rpm/arch 打包路径，
+下载 **SHA-256 钉定的 610.43.03 固件输入**本地生成 DKMS 包与固件包（源码不含任何
+NVIDIA 二进制），装完调 `tools/print_boot_option.py` 打印本机启动参数，并按你的引导器
+（GRUB / systemd-boot）给写入示例。脚本全程只读+确认后执行，不偷偷 `sudo`。
+
+验证三件套，模块加载 ≠ 解锁成功：journal 有 `gpu_unlock: unlocked` → `nvidia-smi` 正常
+→ 空闲跑 bench，fp8 ≈ s8 为满速、fp8 ≈ s8/2 说明还锁着。
 
 ## 为什么做这个
 
@@ -233,12 +261,17 @@ chainload, dual boot, 10de:2685, GpuUnlockBench, AD102, 4070 Ti SUPER, 4060 lapt
 
 # English version
 
-A dual-boot (Linux + Windows) tensor-core unlock kit for the **NVIDIA Ada family**
-(RTX 40, dies AD102/103/103M/104/106/107). The same pre-OS firmware transaction that the
-upstream [gpu-unlock-ada](https://github.com/JustAResearcher/gpu-unlock-ada) Linux kernel
-module runs at boot is wired into GRUB as a self-healing "Windows (GPU Unlock)" entry, so
-Windows gets it too — surviving kernel installs, GRUB regenerations and even Windows Update
-wiping the ESP payload. The engine and AD102-family assets are generic across Ada (the tool
+A tensor-core unlock kit for the **NVIDIA Ada family** (RTX 40, dies AD102/103/103M/104/106/107).
+Two independent paths:
+**Linux-only** — `linux/setup_linux_unlock.sh` detects your distro (apt/dnf/pacman/zypper),
+checks and offers to install build dependencies (toolchain, running-kernel headers, dkms,
+python3, zstd), matches your PCI ID against upstream's supported table, runs upstream
+`make install` (which builds the DKMS module + firmware packages from SHA-pinned 610.43.03
+inputs; no binaries shipped in source) and prints the exact kernel command line your card
+needs. No Windows required.
+**Windows side** — the same pre-OS transaction wired into GRUB as a self-healing
+"Windows (GPU Unlock)" entry, surviving kernel installs, GRUB regeneration and Windows
+Update ESP cleanup. The engine and AD102-family assets are generic across Ada (the tool
 admits the whole `0x2600..0x28ff` device window).
 
 Verified device: **RTX 4090 D (`10de:2685`)** — fp8 270 → 589.6 TF/s (×2.18),
