@@ -65,13 +65,35 @@ if [ -z "$GPU_LINE" ]; then
 else
   say "== 显卡: $GPU_LINE"
   DEV_ID=$(printf '%s' "$GPU_LINE" | sed -n 's/.*\[10de:\([0-9a-fA-F]\{4\}\)\].*/\1/p' | tr 'A-F' 'a-f' | head -1)
-  case "$DEV_ID" in
-    2684) say "   -> RTX 4090：上游主验证路径，无需实验开关。" ;;
-    2685|2689|2702|2704|2705|2709|2757|2782|2783|2786|2803|2805|2882|28a0|28e0|28e1)
-        say "   -> 上游实验白名单 ID（${DEV_ID}），需要各自的 opt-in 标志 + 精确 targets；下一步会打印完整参数。" ;;
-    *)  say "   !! 10de:${DEV_ID} 不在上游支持表；不要强行解锁（机制按卡家族钉定，跨家族误配会 HALT 且不解锁）。"
-        say "      参考上游 README 的实验目标表确认后再运行本脚本。" ;;
-  esac
+  id16=$((16#${DEV_ID:-0}))
+  if [ "$id16" -ge $((0x2600)) ] && [ "$id16" -le $((0x28ff)) ]; then
+    case "$DEV_ID" in
+      2684) say "   -> RTX 4090：上游主验证路径，无需实验开关。" ;;
+      2685|2689|2702|2704|2705|2709|2757|2782|2783|2786|2803|2805|2882|28a0|28e0|28e1)
+          say "   -> Ada 实验白名单 ID（${DEV_ID}），需要 opt-in 标志 + 精确 targets；稍后打印完整参数。" ;;
+      *)  say "   !! ${DEV_ID} 在 Ada 大段内但不在上游 16-ID 实验白名单，本模块不接受。"
+          say "      支持表见上游 README（Experimental Ada targets）。"
+          exit 0 ;;
+    esac
+  elif { [ "$id16" -ge $((0x2200)) ] && [ "$id16" -le $((0x22ff)) ]; } || \
+       { [ "$id16" -ge $((0x2400)) ] && [ "$id16" -le $((0x25ff)) ]; }; then
+    say "   -> Ampere GA10x（RTX 30 系）：本模块保留了上游 GA102/103/104/106/107 设备表与 GA102 载荷"
+    say "      （GA107 2584 本机分支已验证；3090 等记录来自 Zagitta 上游，本分支未逐板复测）。"
+    say "      该 ID 是否确切在列：clone 后 grep 内核源码 '0x${DEV_ID}' kernel/gpu_unlock/main.c"
+    say "      Ampere 的原生项目（Linux 20/30/40 全系）：https://github.com/Zagitta/gpu-unlock"
+  elif { [ "$id16" -ge $((0x1e02)) ] && [ "$id16" -le $((0x1fff)) ]; } || \
+       { [ "$id16" -ge $((0x2182)) ] && [ "$id16" -le $((0x21d1)) ]; }; then
+    say "   !! Turing（RTX 20/16 系）不在本仓库支持内（gpu-unlock-ada 只管 Ada + 遗留 Ampere 表）。"
+    say "      Linux 解锁项目在这里：https://github.com/Zagitta/gpu-unlock"
+    say "      （项目描述明确覆盖 20/30/40 系，up to 2x FP16/BF16/TF32）"
+    say "      Windows 侧理论方案（本套件 README）：nv-uefi-unlocker --family tu10x"
+    exit 0
+  else
+    say "   !! 10de:${DEV_ID} 不在任何支持范围（GA100/数据中心/Blackwell RTX 50 均排除——跨家族误配"
+    say "      固件只会 HALT 且不解锁）。Ada 支持表见上游 README；20/30 系 Linux 见"
+    say "      https://github.com/Zagitta/gpu-unlock 。"
+    exit 0
+  fi
 fi
 
 if [ -n "$missing" ]; then
