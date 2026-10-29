@@ -166,7 +166,7 @@ Windows 和 Linux 用**同一份 C 源码**编译的两个二进制，内嵌与 
 
 ## 实测数字
 
-验证机型：4090 D 48G 改版（`10de:2685`），ROG X670E，96G 内存。
+验证机型：4090 D 48G 改版（`10de:2685`），ROG STRIX X870E-E GAMING WIFI7 NEO，96G 内存。
 Linux `7.3.0-x64v3-xanmod1` / NVIDIA `615.71.09`；Windows CUDA API 13.5。
 同 cubin、同 iters/reps，空闲卡测试，四次开机原始记录在 `results/evidence/`。
 
@@ -317,7 +317,7 @@ single-file builds, same embedded cubins as the Linux reference tools (`4fe8459d
 driver-API only (dlopen; friendly errors if the driver is missing/old), 270,336-cell output
 verification, automatic UNLOCKED/STOCK verdict in `unlock_bench_*.txt`.
 
-## Results (verified device: RTX 4090 D, X670E, Linux xanmod 7.3.0-x64v3 / 615.71.09, Windows CUDA API 13.5)
+## Results (verified device: RTX 4090 D, X870E-E, Linux xanmod 7.3.0-x64v3 / 615.71.09, Windows CUDA API 13.5)
 
 | TF/s | Win stock | Win unlocked | ratio | Linux unlocked |
 |---|---|---|---|---|
