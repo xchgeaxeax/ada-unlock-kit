@@ -1,5 +1,7 @@
 # RTX 4090 D Tensor-Unlock Kit（Linux + Windows 双系统解锁套件）
 
+> 🇬🇧 **English readers**: [jump to the full English documentation ↓](#english) ｜ 中文文档见下文
+
 **English**: Unlock halved FP32-accumulate tensor-core rates (FP16/BF16→FP32, FP8/e4m3,
 TF32) on NVIDIA Ada (RTX 40) and Ampere (RTX 30) GPUs on **both Linux and Windows**,
 with a self-healing GRUB boot entry that runs the pre-OS UEFI firmware transaction
