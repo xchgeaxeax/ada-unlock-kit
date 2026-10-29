@@ -4,6 +4,7 @@
 TF32) on NVIDIA Ada (RTX 40) and Ampere (RTX 30) GPUs on **both Linux and Windows**,
 with a self-healing GRUB boot entry that runs the pre-OS UEFI firmware transaction
 before `bootmgfw.efi`. Volatile, no VBIOS/flash/driver patching.
+⚠️ **Verified device: RTX 4090 D (`10de:2685`) only — other Ada/Ampere models are supported by design but pending verification (see §6).**
 Keywords: RTX 4090D unlock, 4090D 解锁, tensor core FP32 accumulate, FP8, Ada, AD102,
 GSP-RM, PLM, nv-uefi-unlocker, gpu-unlock-ada, GRUB chainload, dual boot unlock.
 
@@ -12,7 +13,8 @@ GSP-RM, PLM, nv-uefi-unlocker, gpu-unlock-ada, GRUB chainload, dual boot unlock.
 ![tested](https://img.shields.io/badge/tested-RTX%204090D%20(10de%3A2685)%20%C3%974%20boots-green)
 
 在双系统机器上，让 RTX 4090 D (AD102, `10de:2685`) 在进入 Windows 时同样获得与
-Linux `gpu_unlock` 内核模块一致的张量算力解锁；启动项自动持久（内核升级、
+Linux `gpu_unlock` 内核模块一致的张量算力解锁。方案对 Ada 全系通用，但
+**本仓库仅验证过 `10de:2685`，其余型号待实测**（§6）；启动项自动持久（内核升级、
 GRUB 升级、ESP 载荷被清均能自愈），可一键完整卸载。本仓库 = 集成脚本 +
 双平台统一单文件基准 + 可复现实测证据，是上游研究项目的**参考实现**。
 Upstream research & implementation: [JustAResearcher/gpu-unlock-ada](https://github.com/JustAResearcher/gpu-unlock-ada)；
@@ -154,7 +156,32 @@ NVIDIA `615.71.09` / Windows CUDA API 13.5，2026-10-29，同 cubin、同 iters/
 与上游 4090 (2684) 报告的形状一致（FE：165.6→331.6 精确 2.00×）；
 2.18× 的 fp8 与 README 记录的"FP8 半速→满速"结构吻合。
 
-## 6. 什么场景真的更快（诚实版）
+## 6. 适用设备与验证状态（重要）
+
+**机制是通用的，实测目前只有一种。**
+
+- 事务引擎与固件资产（AD102 家族 Booter/GSP/四写载荷）对整个 Ada 家族通用；
+  Windows 侧 nv-uefi-unlocker 的设备段为 `0x2600..0x28ff`——覆盖全部 GeForce 40
+  桌面与移动（AD102/103/103M/104/106/107）及部分工作站 L 级；其
+  `ga102`/`tu10x` 家族资产另覆盖 RTX 30（GA102/103/104/106/107）与 RTX 20/16
+  （Turing，需 GSP 模式、FLR 行为不同）。Linux 上游模块则采用逐 ID 白名单
+  （16 个 Ada ID，见上游 README 矩阵，含 4090D/4080S/4070 系/4060 系与
+  4060/4050 Laptop），专业 Ada、数据卡（L4/L40）与 Blackwell（RTX 50）
+  均不接受。
+- **本仓库唯一完整双端验证记录：`10de:2685` RTX 4090 D**
+  （`results/evidence/` 四次开机：Linux×2 + Windows stock/unlocked×2）。
+  其他 Ada/Ampere 型号 = **理论适用，本套件尚未实测**；成功与失败都欢迎
+  带 `loader.log` + `bench` 输出开 issue（上游按 first-silicon 流程把
+  型号升级为"已验证"）。
+- 上手前先花 60 秒判断"值不值得期待"：空闲 GPU 运行
+  `bench/gpu_unlock_bench_linux`（或 Windows 的 `GpuUnlockBench.exe`）——
+  **fp8 ≈ s8 的一半且 f16/f32 ≈ f16/f16 的一半 → 被锁，解锁预期 ~2×**；
+  fp8 ≈ s8 → 该 SKU 未被减半，解锁无吞吐收益（案例：某 Clevo 4090 Laptop）。
+- 笔记本专项提醒：MUX/独显直连（混显下控制台拥有者图不同）、RTD3 空闲
+  D3cold 会抹掉已生效的解锁（Windows 电源管理里关闭 dGPU 运行时挂起）、
+  `power.limit` 可能报 N/A（Dynamic Boost）。
+
+## 7. 什么场景真的更快（诚实版）
 
 **受益（矩阵乘走 FP32-accumulate 或 FP8 的负载）**：
 
@@ -182,7 +209,7 @@ NVIDIA `615.71.09` / Windows CUDA API 13.5，2026-10-29，同 cubin、同 iters/
 简言之：**这是一次"面向 AI 数学库"的解锁**，凡 CUDA 调用 cuBLAS/CUTLASS
 里 `16F*16F+32F` / `BF16+32F` / `E4M3` GEMM 的都受益；渲染与 INT8 不受益。
 
-## 7. 风险与边界
+## 8. 风险与边界
 
 - 事务不写 VBIOS/不刷固件/不打驱动补丁；解锁状态断电即失。
 - 失败路径全部设计为"零写入 + 直接进 Windows"；最坏情况是屏幕停在工具横幅，
@@ -191,7 +218,7 @@ NVIDIA `615.71.09` / Windows CUDA API 13.5，2026-10-29，同 cubin、同 iters/
 - 本集成基于社区工具 + 上游研究，属**实验性**；对生产力机器请在可停机窗口验证。
 - 若更换显卡/刷 VBIOS，ROM/FWSEC 钉定资产需要重新生成（见上游 testing.md）。
 
-## 8. 卸载
+## 9. 卸载
 
 ```bash
 sudo ./linux/uninstall_windows_unlock.sh
@@ -201,7 +228,7 @@ sudo ./linux/uninstall_windows_unlock.sh
 现有正常 Windows/Linux 条目不受任何影响。探针产物
 （`probe-results-*`、`unlock_probe.sh`、自己拷贝的 bench 二进制副本）按需自行删除。
 
-## 9. 致谢 / Acknowledgments
+## 10. 致谢 / Acknowledgments
 
 - [JustAResearcher/gpu-unlock-ada](https://github.com/JustAResearcher/gpu-unlock-ada) —
   上游项目：解锁原理、Linux 内核模块、探针工具与 `firmware/` 钉定资产清单（本套件
@@ -219,7 +246,7 @@ sudo ./linux/uninstall_windows_unlock.sh
 - 上游 issue/PR 的实测贡献者（4090D 八卡 #7、VFIO 2782 #15、各型号 matched 报告），
   以及本机 2026-10-29 首次桌面 `10de:2685` Windows 双端验证的全部数据记录。
 
-## 10. 收录关键词 / Keywords (SEO)
+## 11. 收录关键词 / Keywords (SEO)
 
 RTX 4090D 解锁, RTX 4090 D unlock, 4090D 解锁, 4080 SUPER unlock, 4070 Ti SUPER,
 Ada tensor core unlock, FP32 accumulate 2x, FP8 e4m3 unlock, TF32 unlock,
@@ -297,6 +324,22 @@ or embedding workloads.
 **No benefit**: INT8/INT4 inference (never gated, never doubled — matches
 upstream's quantized-MoE "no change" case), games/DLSS rendering, pure FP32
 HPC (FFMA), NVENC, VRAM capacity, memory-bandwidth-bound kernels.
+
+## Verification status (supported devices)
+
+The transaction engine and AD102-family firmware assets are **generic across
+Ada** and the Windows tool's device window (`0x2600..0x28ff`) covers the
+whole GeForce 40 desktop/mobile line (plus L-class workstations); `ga102`
+and `tu10x` asset families extend it to RTX 30 and RTX 20/16. **However, the
+only fully validated device in this repository is `10de:2685` (RTX 4090 D)**
+— four logged boots in `results/evidence/`. Every other model is *expected
+to work, unverified here*. Quick pre-flight check: run the bench on an idle
+GPU — fp8 ≈ s8/2 means halved and unlockable (~2× expected); fp8 ≈ s8 means
+that SKU was never throttled and gains nothing. Laptops: use dGPU-direct /
+MUX mode, disable RTD3 (D3cold erases the volatile unlock). Professional Ada,
+data-center parts and Blackwell (RTX 50) are out of scope. Success or failure
+reports with `loader.log` + bench output are welcome and feed the upstream
+first-silicon tracking process.
 
 ## 7–8. Risk & removal
 
