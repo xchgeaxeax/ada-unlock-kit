@@ -247,6 +247,11 @@ sudo ./linux/uninstall_windows_unlock.sh
   钉定固件资产的公开来源。
 - 上游 issue/PR 的实测贡献者（4090D 八卡 #7、VFIO 2782 #15、各型号 matched 报告），
   以及本机 2026-10-29 首次桌面 `10de:2685` Windows 双端验证的全部数据记录。
+- **本项目为 AI 辅助完成**（方案评估、脚本、文档、A/B 实测均由下述本地栈执行，
+  人工监督与最终验证由机器所有者完成）：
+  - 推理引擎：**Strata** — <https://github.com/Niko1221/Strata>（本机部署，引擎 0.1.53）
+  - 模型官方：**Qwen（通义千问团队）** — Qwen3.8-Flash-Next — <https://github.com/QwenLM>
+  - 量化作者：**Unsloth**（UD 动态量化 `q4_k_xl` GGUF）— <https://huggingface.co/unsloth>
 
 ## 11. 收录关键词 / Keywords (SEO)
 
@@ -367,3 +372,34 @@ pre-OS UEFI transaction engine:
 matrixxx1/gpuunlock-windows, TOTORONG/AD103_win_unlocker (payload origin),
 NVIDIA/open-gpu-kernel-modules (pinned firmware). First desktop `10de:2685`
 dual-OS validated record: this repo, 2026-10-29 (`results/evidence/`).
+
+**This project was AI-assisted.** Planning, scripts, benchmarks and
+documentation were produced with a fully local stack, under human
+supervision and on-device verification by the machine owner:
+engine [Strata](https://github.com/Niko1221/Strata) (0.1.53, local), model
+[Qwen3.8-Flash-Next](https://github.com/QwenLM) (official Qwen team),
+quantized as Unsloth Dynamic Q4_K_XL GGUF by
+[Unsloth](https://huggingface.co/unsloth).
+
+---
+
+## 📝 生成方式声明 / AI-Assistance Disclosure (EN)
+
+**中文**：本仓库的方案调研、代码（脚本/基准）、文档与全部实测数据于 2026-10-29
+由本地 AI 栈辅助完成：模型 **Qwen3.8-Flash-Next**（[Qwen 官方](https://github.com/QwenLM)），
+量化 **Unsloth UD Q4_K_XL**（[Unsloth](https://huggingface.co/unsloth)），
+推理引擎 **Strata**（[Niko1221/Strata](https://github.com/Niko1221/Strata)，引擎 0.1.53）。
+全程离线运行，未调用云端服务；数据均由本机硬件实测（`results/evidence/`），
+所有结论可复现（`BUILD.txt`、`bench/embed_cubins.py` 钉定哈希）。
+AI 输出存在错误可能，使用前请自行阅读脚本并评估风险。
+
+**English**: This repository (design research, scripts, benchmark code,
+documentation) was produced on 2026-10-29 with a fully **local** AI stack —
+model **Qwen3.8-Flash-Next** (official [Qwen team](https://github.com/QwenLM)),
+quantized **Unsloth Dynamic Q4_K_XL**
+([Unsloth](https://huggingface.co/unsloth)), served by the
+[Strata](https://github.com/Niko1221/Strata) engine (0.1.53) on the same
+machine being measured. No cloud inference was used. All numbers in
+`results/evidence/` come from on-device runs and are reproducible from the
+pinned hashes (`BUILD.txt`, `bench/embed_cubins.py`). AI output can be wrong:
+read the scripts and assess the risk before use.
