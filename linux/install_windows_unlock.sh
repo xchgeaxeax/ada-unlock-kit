@@ -14,10 +14,18 @@ set -eu
 [ -d /sys/firmware/efi ] || { echo "not a UEFI system" >&2; exit 1; }
 STAGE_SRC=${1:-}
 [ -n "$STAGE_SRC" ] && [ -f "$STAGE_SRC/BOOTX64.EFI" ] || { echo "stage dir with BOOTX64.EFI required" >&2; exit 1; }
-for f in booter_load_ad102.bin gsp_boot_ad102.bin gsp_boot_desc_ad102.bin fwimage_ad102.bin fwsignature_ad102.bin scrubber_ad10x.bin; do
+# Infer asset family from the stage: ad102 (Ada) / ga102 (Ampere) / tu10x (Turing)
+if   [ -f "$STAGE_SRC/booter_load_ad102.bin" ]; then FAM=ad102
+elif [ -f "$STAGE_SRC/booter_load_ga102.bin" ]; then FAM=ga102
+elif [ -f "$STAGE_SRC/booter_load_tu10x.bin" ]; then FAM=tu10x
+else echo "stage contains no known asset family (booter_load_ad102|ga102|tu10x.bin)" >&2; exit 1; fi
+echo "asset family: $FAM"
+for f in "booter_load_$FAM.bin" "gsp_boot_$FAM.bin" "gsp_boot_desc_$FAM.bin" "fwimage_$FAM.bin" "fwsignature_$FAM.bin"; do
   [ -f "$STAGE_SRC/$f" ] || { echo "missing asset: $f" >&2; exit 1; }
 done
-[ -f "$STAGE_SRC/v67-ad102-four-plm.bin" ] || echo "WARN: v67 payload absent - tool runs in replay (no-write) mode" >&2
+ls "$STAGE_SRC"/scrubber_*.bin >/dev/null 2>&1 || { echo "missing scrubber_*.bin" >&2; exit 1; }
+[ "$FAM" != tu10x ] || { [ -f "$STAGE_SRC/sec2_bl_tu10x.bin" ] || { echo "tu10x needs sec2_bl_tu10x.bin" >&2; exit 1; }; }
+[ -f "$STAGE_SRC/v67-$FAM-four-plm.bin" ] || echo "WARN: v67 payload absent - tool runs in replay (no-write) mode" >&2
 
 DEST=/usr/local/share/nv-uefi-unlocker
 mkdir -p "$DEST"
